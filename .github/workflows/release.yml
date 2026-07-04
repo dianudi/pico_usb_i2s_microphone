@@ -1,0 +1,89 @@
+name: Build and Release UF2
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.board.label }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        board:
+          - name: pico
+            label: Pico-RP2040
+          - name: pico2
+            label: Pico2-RP2350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install ARM GCC Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi cmake build-essential python3
+
+      - name: Build Pico SDK
+        run: |
+          git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/pico-sdk.git /tmp/pico-sdk
+          cd /tmp/pico-sdk
+          git submodule update --init --depth 1
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build-${{ matrix.board.name }}
+          cmake -B build-${{ matrix.board.name }} \
+            -DPICO_BOARD=${{ matrix.board.name }} \
+            -DPICO_SDK_PATH=/tmp/pico-sdk \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPICO_TINYUSB_PATH=${{ github.workspace }}/lib/tinyusb
+
+      - name: Build
+        run: |
+          cmake --build build-${{ matrix.board.name }} --parallel $(nproc)
+
+      - name: Rename and Upload UF2 as Artifact
+        run: |
+          cp build-${{ matrix.board.name }}/pico_usb_i2s_microphone.uf2 \
+             build-${{ matrix.board.name }}/pico_usb_i2s_microphone-${{ matrix.board.label }}.uf2
+
+      - name: Upload UF2 as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pico_usb_i2s_microphone-${{ matrix.board.label }}
+          path: build-${{ matrix.board.name }}/pico_usb_i2s_microphone-${{ matrix.board.label }}.uf2
+
+  release:
+    name: Attach UF2 to Release
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Upload to Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for dir in */; do
+            uf2=$(find "$dir" -name '*.uf2' -print -quit)
+            if [ -n "$uf2" ]; then
+              gh release upload "${{ github.event.release.tag_name }}" "$uf2" --clobber
+            fi
+          done
