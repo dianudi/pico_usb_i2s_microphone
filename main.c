@@ -74,24 +74,21 @@ static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
 // Audio controls
 // Current states
-uint8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];   // +1 for master channel 0
-int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];// +1 for master channel 0
-uint32_t current_sample_rate = 44100;
-const uint8_t resolutions_per_format[CFG_TUD_AUDIO_FUNC_1_N_FORMATS] = {CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX,
-                                                                        CFG_TUD_AUDIO_FUNC_1_FORMAT_2_RESOLUTION_RX};
-uint8_t current_resolution;
+uint8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX + 1];   // +1 for master channel 0
+int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX + 1];// +1 for master channel 0
+volatile uint32_t current_sample_rate = 48000;
+const uint8_t resolutions_per_format[CFG_TUD_AUDIO_FUNC_1_N_FORMATS] = {CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_TX};
+uint8_t current_resolution = 24;
 
-// Buffer for speaker data
-// uint16_t i2s_dummy_buffer[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 2];
-uint8_t spk_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ];
-volatile int spk_data_size;
+// Buffer for mic data
+uint8_t mic_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ];
 
 void led_blinking_task(void);
 void audio_task(void);
 void core1_main(void);
 
 #define TUD_TASK_INTERVAL_US    250
-#define DEQUEUE_MAX_LEN   (CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE_FS / 2000 + 1)
+#define DEQUEUE_MAX_LEN   (CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE_FS / 1000 + 1)
 
 __isr bool __time_critical_func(tud_timer_callback)(__unused struct repeating_timer *t) {
   tud_task();
@@ -101,15 +98,15 @@ __isr bool __time_critical_func(tud_timer_callback)(__unused struct repeating_ti
 
 /*------------- MAIN -------------*/
 int main(void) {
-  i2s_mclk_set_config(pio0, CLOCK_MODE_LOW_JITTER, MODE_I2S);
+  i2s_mclk_set_config(pio0, CLOCK_MODE_DEFAULT, MODE_I2S_SLAVE_INPUT);
   board_init();
 
-  // i2s初期化
-  i2s_mclk_set_pin(18, 20, 22);
+  // i2s初期化 (DATA=10, BCLK=11, LRCK=12, MCLK=22)
+  i2s_mclk_set_pin(10, 11, 22);
   i2s_mclk_init(current_sample_rate);
   i2s_volume_change(0, 0);
 
-  // i2s送信開始
+  // i2s受信開始
   multicore_launch_core1(core1_main);
 
   // init device stack on configured roothub port
@@ -120,7 +117,7 @@ int main(void) {
 
   board_init_after_tusb();
 
-  TU_LOG1("Speaker running\r\n");
+  TU_LOG1("Microphone running\r\n");
 
   // tud_task()とaudio_task()を実行するタイマ
   static struct repeating_timer tud_timer;
@@ -566,14 +563,12 @@ bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const 
   return true;
 }
 
-bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t func_id, uint8_t ep_out, uint8_t cur_alt_setting) {
+bool tud_audio_tx_done_pre_isr(uint8_t rhport, uint16_t n_bytes_copied, uint8_t func_id, uint8_t ep_in, uint8_t cur_alt_setting) {
   (void) rhport;
-  (void) n_bytes_received;
+  (void) n_bytes_copied;
   (void) func_id;
-  (void) ep_out;
+  (void) ep_in;
   (void) cur_alt_setting;
-
-  spk_data_size = tud_audio_read(spk_buf, n_bytes_received);
 
   return true;
 }
@@ -582,48 +577,21 @@ bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t fu
 // AUDIO Task
 //--------------------------------------------------------------------+
 
-// This task simulates an audio transmit callback, one frame is sent every 1ms.
-// In a real application, this would be replaced with actual I2S transmit callback.
 void audio_task(void) {
-  static uint32_t start_ms = 0;
+  if (tud_audio_mounted()) {
+    int length = i2s_get_queue_length();
+    int tx_len = current_sample_rate / 1000; // 1ms worth of data
 
-  if (spk_data_size) {
-    static int32_t uac_buf_l[I2S_QUEUE_MAX];
-    static int32_t uac_buf_r[I2S_QUEUE_MAX];
+    if (length >= tx_len) {
+      static int32_t uac_buf_l[DEQUEUE_MAX_LEN];
+      static int32_t uac_buf_r[DEQUEUE_MAX_LEN];
 
-    // i2sキューに積む
-    int rx_length = i2s_unpack_uacdata(spk_buf, spk_data_size, current_resolution, uac_buf_l, uac_buf_r);
-    i2s_volume(uac_buf_l, uac_buf_r, rx_length);
-    i2s_enqueue(uac_buf_l, uac_buf_r, rx_length);
-    spk_data_size = 0;
-
-    // フィードバックは1msに1回
-    uint32_t curr_ms = board_millis();
-    if (start_ms == curr_ms) return;// not enough time
-    start_ms = curr_ms;
-
-    // フィードバック処理
-    int length =  i2s_get_queue_length();
-    int trget_level = i2s_get_freq() * 3 / 2000;
-    uint feedback = (uint32_t)(((uint64_t)current_sample_rate << 16u) / 1000u);
-
-    // フィードバックの最大値、最小値
-    uint feedback_max = (current_sample_rate / 1000 + 1) << 16;
-    uint feedback_min = ((current_sample_rate - 1) / 1000) << 16;
-
-    // フィードバック値計算
-    if (trget_level > length){
-      feedback = feedback + (uint32_t)((uint64_t)(trget_level - length) * (feedback_max - feedback) / trget_level);
+      int rx_length = i2s_dequeue(uac_buf_l, uac_buf_r, tx_len);
+      i2s_volume(uac_buf_l, uac_buf_r, rx_length); // <--- Tambahkan ini
+      int packed_len = i2s_pack_uacdata(uac_buf_l, uac_buf_r, rx_length, current_resolution, mic_buf);
+      
+      tud_audio_write(mic_buf, packed_len);
     }
-    else{
-      feedback = feedback - (uint32_t)((uint64_t)(length - trget_level) * (feedback - feedback_min) / trget_level);
-    }
-
-    // フィードバック値を規定の値に収める
-    if (feedback > feedback_max) feedback = feedback_max;
-    if (feedback < feedback_min) feedback = feedback_min;
-
-    tud_audio_fb_set(feedback);
   }
 }
 
@@ -644,69 +612,80 @@ void led_blinking_task(void) {
 }
 #endif
 
-void core1_main(void){
-  int dma_sample;
-  bool mute = false;
-  int buf_length;
-  static int32_t dma_buf_a[2][DEQUEUE_MAX_LEN * 2], dma_buf_b[2][DEQUEUE_MAX_LEN * 2];
-  uint8_t dma_use = 0;
-  int dequeue_len;
+// --- Biquad Filter 20Hz @ 48kHz ---
+typedef struct {
+    float x1, x2;
+    float y1, y2;
+    float b0, b1, b2, a1, a2;
+} BiquadFilter;
 
+static BiquadFilter filter_l, filter_r;
+
+// Initialize Butterworth HPF 20Hz @ 48kHz
+void init_hpf_20hz_48khz(BiquadFilter *f) {
+    f->b0 =  0.998148f;
+    f->b1 = -1.996296f;
+    f->b2 =  0.998148f;
+    f->a1 = -1.996292f;
+    f->a2 =  0.996301f;
+    f->x1 = f->x2 = f->y1 = f->y2 = 0.0f;
+}
+
+static inline float __time_critical_func(biquad_process)(BiquadFilter *f, float in_sample) {
+    float out_sample = (f->b0 * in_sample) + (f->b1 * f->x1) + (f->b2 * f->x2) 
+                       - (f->a1 * f->y1) - (f->a2 * f->y2);
+    f->x2 = f->x1;
+    f->x1 = in_sample;
+    f->y2 = f->y1;
+    f->y1 = out_sample;
+    return out_sample;
+}
+
+void core1_main(void){
+  static uint32_t dma_buf[DEQUEUE_MAX_LEN * 2];
+  static int32_t i2s_buf_l[DEQUEUE_MAX_LEN], i2s_buf_r[DEQUEUE_MAX_LEN];
+  int dequeue_len;
   int sample;
-  int32_t i2s_buf_l[DEQUEUE_MAX_LEN], i2s_buf_r[DEQUEUE_MAX_LEN];
 
   gpio_init(PICO_DEFAULT_LED_PIN);
   gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+  gpio_put(PICO_DEFAULT_LED_PIN, 1);
+
+  i2s_clear_fifo();
+
+  init_hpf_20hz_48khz(&filter_l);
+  init_hpf_20hz_48khz(&filter_r);
+  
+  static int32_t dc_l = 0, dc_r = 0;
 
   while (1){
-    buf_length = i2s_get_queue_length();
-    // 0.5ms分ずつi2sに送る
-    dequeue_len = i2s_get_freq() / 2000;
+    // 1ms分ずつi2sから読み込む
+    dequeue_len = i2s_get_freq() / 1000;
     if (dequeue_len > DEQUEUE_MAX_LEN) {
       dequeue_len = DEQUEUE_MAX_LEN;
     }
 
-    // printf("%3d\n", buf_length);
+    // dmaでデータ取得
+    i2s_dma_transfer_blocking((int32_t*)dma_buf, NULL, dequeue_len * 2);
 
-    // i2sキューが一定以上溜まったらミュート解除
-    if (buf_length == 0 && mute == false){
-      mute = true;
-      gpio_put(PICO_DEFAULT_LED_PIN, 0);
-    }
-    else if (buf_length >= (dequeue_len * 3) && mute == true){
-      mute = false;
-      gpio_put(PICO_DEFAULT_LED_PIN, 1);
-    }
+    // L/Rに分離
+    sample = i2s_parse_piodata(dma_buf, dequeue_len * 2, i2s_buf_l, i2s_buf_r);
 
-    if (mute == false){
-      // i2sキューから取り出す
-      sample = i2s_dequeue(i2s_buf_l, i2s_buf_r, dequeue_len);
+    // DC Block Filter & Digital Boost
+    for (int i = 0; i < sample; i++) {
+        float sample_l_f = (float)i2s_buf_l[i];
+        float sample_r_f = (float)i2s_buf_r[i];
 
-      // キューから取り出したデータ量が要求より少ない場合は、0埋めしてミュート状態へ
-      if (sample < dequeue_len){
-        for (int i = sample; i < dequeue_len; i++){
-          i2s_buf_l[i] = 0;
-          i2s_buf_r[i] = 0;
-        }
-        sample = dequeue_len;
-        mute = true;
-        gpio_put(PICO_DEFAULT_LED_PIN, 0);
-      }
-    }
-    else{
-      // ミュート状態の時は0を送信
-      for (int i = 0; i < dequeue_len; i++){
-        i2s_buf_l[i] = 0;
-        i2s_buf_r[i] = 0;
-      }
-      sample = dequeue_len;
+        // filter DC Block and 20Hz HPF
+        sample_l_f = biquad_process(&filter_l, sample_l_f);
+        sample_r_f = biquad_process(&filter_r, sample_r_f);
+
+        //Boost 6x & return to format int32_t for queue
+        i2s_buf_l[i] = (int32_t)(sample_l_f * 6.0f);
+        i2s_buf_r[i] = (int32_t)(sample_r_f * 6.0f);
     }
 
-    // pio送信形式に変換
-    dma_sample = i2s_format_piodata(i2s_buf_l, i2s_buf_r, sample, dma_buf_a[dma_use], dma_buf_b[dma_use]);
-
-    // dmaが終わるまで待機
-    i2s_dma_transfer_blocking(dma_buf_a[dma_use], dma_buf_b[dma_use], dma_sample);
-    dma_use ^= 1;
+    // キューへ追加
+    i2s_enqueue(i2s_buf_l, i2s_buf_r, sample);
   }
 }

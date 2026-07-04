@@ -96,15 +96,15 @@ uint8_t const * tud_descriptor_device_cb(void) {
   #define EPNUM_AUDIO_FB    0x01
 #endif
 
-#define CONFIG_UAC1_TOTAL_LEN    	(TUD_CONFIG_DESC_LEN + TUD_AUDIO10_SPEAKER_STEREO_FB_DESC_LEN(4))
+#define CONFIG_UAC1_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_AUDIO10_MIC_STEREO_DESC_LEN(1))
 
 
 uint8_t const desc_uac1_configuration[] = {
   // Config number, interface count, string index, total length, attribute, power in mA
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_UAC1_TOTAL_LEN, 0x00, 100),
 
-  // Interface number, string index, byte per sample, bit per sample, EP Out, EP size, EP feedback, sample rates (44.1kHz, 48kHz)
-  TUD_AUDIO10_SPEAKER_STEREO_FB_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, 5, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_RX, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX, EPNUM_AUDIO, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_OUT_SZ_FS, EPNUM_AUDIO_FB | 0x80, 44100, 48000, 88200, 96000),
+  // Interface number, string index, byte per sample, bit per sample, EP In, EP size, sample rates (48kHz)
+  TUD_AUDIO10_MIC_STEREO_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, 5, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_TX, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_TX, EPNUM_AUDIO | 0x80, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_IN_SZ_FS, 48000),
 
 };
 
@@ -112,14 +112,14 @@ TU_VERIFY_STATIC(sizeof(desc_uac1_configuration) == CONFIG_UAC1_TOTAL_LEN, "Inco
 
 #if TUD_OPT_HIGH_SPEED
 
-#define CONFIG_UAC2_TOTAL_LEN    	(TUD_CONFIG_DESC_LEN + TUD_AUDIO20_SPEAKER_STEREO_FB_DESC_LEN)
+#define CONFIG_UAC2_TOTAL_LEN    	(TUD_CONFIG_DESC_LEN + TUD_AUDIO20_MIC_STEREO_DESC_LEN)
 
 uint8_t const desc_uac2_configuration[] = {
   // Config number, interface count, string index, total length, attribute, power in mA
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_UAC2_TOTAL_LEN, 0x00, 100),
 
-  // Interface number, string index, byte per sample, bit per sample, EP Out, EP size, EP feedback, feedback EP size,
-  TUD_AUDIO20_SPEAKER_STEREO_FB_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, 4, CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_RX, CFG_TUD_AUDIO_FUNC_1_RESOLUTION_RX, EPNUM_AUDIO, CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_HS, EPNUM_AUDIO_FB | 0x80, 4),
+  // Interface number, string index, byte per sample, bit per sample, EP In, EP size
+  TUD_AUDIO20_MIC_STEREO_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, 4, CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_TX, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_TX, EPNUM_AUDIO | 0x80, CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_HS),
 
 };
 
@@ -194,10 +194,10 @@ static char const *string_desc_arr[] =
 {
   (const char[]) { 0x09, 0x04 },  // 0: is supported language is English (0x0409)
   "TinyUSB",                      // 1: Manufacturer
-  "TinyUSB Speaker",              // 2: Product
+  "TinyUSB Microphone",           // 2: Product
   NULL,                           // 3: Serials will use unique ID if possible
-  "UAC2 Speaker",                 // 4: Audio Interface
-  "UAC1 Speaker",                 // 5: UAC1 Audio Interface
+  "UAC2 Microphone",              // 4: Audio Interface
+  "UAC1 Microphone",              // 5: UAC1 Audio Interface
 };
 
 static uint16_t _desc_str[32 + 1];

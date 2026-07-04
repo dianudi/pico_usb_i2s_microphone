@@ -31,31 +31,31 @@ set(PICO_TINYUSB_PATH ${CMAKE_SOURCE_DIR}/lib/tinyusb)
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(pico_usb_i2s_speaker C CXX ASM)
+project(pico_usb_i2s_microphone C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(pico_usb_i2s_speaker
+add_executable(pico_usb_i2s_microphone
         main.c
         usb_descriptors.c
         )
 
-pico_set_program_name(pico_usb_i2s_speaker "pico_usb_i2s_speaker")
-pico_set_program_version(pico_usb_i2s_speaker "0.1")
+pico_set_program_name(pico_usb_i2s_microphone "pico_usb_i2s_microphone")
+pico_set_program_version(pico_usb_i2s_microphone "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(pico_usb_i2s_speaker 1)
-pico_enable_stdio_usb(pico_usb_i2s_speaker 0)
+pico_enable_stdio_uart(pico_usb_i2s_microphone 1)
+pico_enable_stdio_usb(pico_usb_i2s_microphone 0)
 
 # Add the standard library to the build
-target_link_libraries(pico_usb_i2s_speaker
+target_link_libraries(pico_usb_i2s_microphone
         pico_stdlib)
 
 # Add the standard include files to the build
-target_include_directories(pico_usb_i2s_speaker PRIVATE
+target_include_directories(pico_usb_i2s_microphone PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}
   ${CMAKE_CURRENT_LIST_DIR}/.. # for our common lwipopts or any other standard includes, if required
 )
@@ -65,7 +65,7 @@ set(I2S_QUEUE_LEN 10)
 add_subdirectory(${CMAKE_SOURCE_DIR}/lib/pico-i2s-pio)
 
 # Add any user requested libraries
-target_link_libraries(pico_usb_i2s_speaker
+target_link_libraries(pico_usb_i2s_microphone
         hardware_clocks
         hardware_dma
         pico_multicore
@@ -74,5 +74,5 @@ target_link_libraries(pico_usb_i2s_speaker
         pico-i2s-pio
         )
 
-pico_add_extra_outputs(pico_usb_i2s_speaker)
+pico_add_extra_outputs(pico_usb_i2s_microphone)
 
